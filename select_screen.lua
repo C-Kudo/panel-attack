@@ -1,3 +1,5 @@
+local logger = require("logger")
+
 local select_screen = {}
 
 select_screen.fallback_when_missing = {nil, nil}
@@ -24,7 +26,7 @@ local function fill_map(template_map, map)
           character_id_index = character_id_index + 1
           -- end case: no more characters_ids_for_current_theme to add
           if character_id_index == #characters_ids_for_current_theme + 1 then
-            print("filled " .. #characters_ids_for_current_theme .. " characters across " .. pages_amount .. " page(s)")
+            logger.trace("filled " .. #characters_ids_for_current_theme .. " characters across " .. pages_amount .. " page(s)")
             return pages_amount
           end
         end
@@ -173,7 +175,7 @@ function select_screen.main()
     P1 = nil
     P2 = nil
     drop_old_data_messages() -- Starting a new game, clear all old data messages from the previous game
-    print("Reseting player stacks")
+    logger.debug("Reseting player stacks")
 
     -- Wait till we have the room setup messages from the server
     local opponent_connected = false
@@ -182,7 +184,6 @@ function select_screen.main()
       local msg = server_queue:pop_next_with("create_room", "character_select", "spectate_request_granted")
       if msg then
         global_initialize_room_msg = msg
-        GAME.battleRoom = BattleRoom()
       end
       gprint(loc("ss_init"), unpack(main_menu_screen_pos))
       wait()
@@ -204,30 +205,30 @@ function select_screen.main()
 
     if msg.your_player_number then
       my_player_number = msg.your_player_number
-    elseif currently_spectating then
+    elseif GAME.battleRoom.spectating then
       my_player_number = 1
     elseif my_player_number and my_player_number ~= 0 then
-      print("We assumed our player number is still " .. my_player_number)
+      logger.debug("We assumed our player number is still " .. my_player_number)
     else
       error(loc("nt_player_err"))
-      print("Error: The server never told us our player number.  Assuming it is 1")
+      logger.error("The server never told us our player number.  Assuming it is 1")
       my_player_number = 1
     end
 
     if msg.op_player_number then
       op_player_number = msg.op_player_number or op_player_number
-    elseif currently_spectating then
+    elseif GAME.battleRoom.spectating then
       op_player_number = 2
     elseif op_player_number and op_player_number ~= 0 then
-      print("We assumed op player number is still " .. op_player_number)
+      logger.debug("We assumed op player number is still " .. op_player_number)
     else
       error("We never heard from the server as to what player number we are")
-      print("Error: The server never told us our player number.  Assuming it is 2")
+      logger.error("The server never told us our player number.  Assuming it is 2")
       op_player_number = 2
     end
 
     if my_player_number == 2 and msg.a_menu_state ~= nil and msg.b_menu_state ~= nil then
-      print("inverting the states to match player number!")
+      logger.warn("inverting the states to match player number!")
       msg.a_menu_state, msg.b_menu_state = msg.b_menu_state, msg.a_menu_state
     end
 
@@ -251,7 +252,7 @@ function select_screen.main()
       match_type = "Casual"
     end
 
-    print("current_server_supports_ranking: " .. tostring(current_server_supports_ranking))
+    logger.trace("current_server_supports_ranking: " .. tostring(current_server_supports_ranking))
 
     if current_server_supports_ranking then
       template_map = {
@@ -276,8 +277,8 @@ function select_screen.main()
     global_current_room_ratings = global_current_room_ratings or {{new = 0, old = 0, difference = 0}, {new = 0, old = 0, difference = 0}}
     my_expected_win_ratio = nil
     op_expected_win_ratio = nil
-    print("my_player_number = " .. my_player_number)
-    print("op_player_number = " .. op_player_number)
+    logger.trace("my_player_number = " .. my_player_number)
+    logger.trace("op_player_number = " .. op_player_number)
     if global_current_room_ratings[my_player_number].new and global_current_room_ratings[my_player_number].new ~= 0 and global_current_room_ratings[op_player_number] and global_current_room_ratings[op_player_number].new ~= 0 then
       my_expected_win_ratio = (100 * round(1 / (1 + 10 ^ ((global_current_room_ratings[op_player_number].new - global_current_room_ratings[my_player_number].new) / RATING_SPREAD_MODIFIER)), 2))
       op_expected_win_ratio = (100 * round(1 / (1 + 10 ^ ((global_current_room_ratings[my_player_number].new - global_current_room_ratings[op_player_number].new) / RATING_SPREAD_MODIFIER)), 2))
@@ -748,10 +749,10 @@ function select_screen.main()
       end
     elseif str == "P1" then
       draw_player_state(cursor_data[1], 1)
-      pstr = my_name
+      pstr = GAME.battleRoom.playerNames[1]
     elseif str == "P2" then
       draw_player_state(cursor_data[2], 2)
-      pstr = op_name
+      pstr = GAME.battleRoom.playerNames[2]
     elseif character and character ~= random_character_special_value then
       pstr = character.display_name
     elseif string.sub(str, 1, 2) ~= "__" then -- catch random_character_special_value case
@@ -778,7 +779,7 @@ function select_screen.main()
     end
   end
 
-  print("got to LOC before net_vs_room character select loop")
+  logger.trace("got to LOC before net_vs_room character select loop")
   menu_clock = 0
 
   local v_align_center = {__Ready = true, __Random = true, __Leave = true}
@@ -841,7 +842,7 @@ function select_screen.main()
           GAME.battleRoom:updateWinCounts(msg.win_counts)
         end
         if msg.menu_state then
-          if currently_spectating then
+          if GAME.battleRoom.spectating then
             if msg.player_number == 1 or msg.player_number == 2 then
               cursor_data[msg.player_number].state = msg.menu_state
               refresh_based_on_own_mods(cursor_data[msg.player_number].state)
@@ -873,7 +874,7 @@ function select_screen.main()
           return main_dumb_transition, {main_net_vs_lobby, "", 0, 0} -- opponent left the select screen
         end
         if (msg.match_start or replay_of_match_so_far) and msg.player_settings and msg.opponent_settings then
-          print("currently_spectating: " .. tostring(currently_spectating))
+          logger.debug("spectating: " .. tostring(GAME.battleRoom.spectating))
           local fake_P1 = {panel_buffer = "", gpanel_buffer = ""}
           local fake_P2 = {panel_buffer = "", gpanel_buffer = ""}
           refresh_based_on_own_mods(msg.opponent_settings)
@@ -888,7 +889,7 @@ function select_screen.main()
           stage_loader_wait()
           GAME.match = Match("vs", GAME.battleRoom)
           local is_local = true
-          if currently_spectating then
+          if GAME.battleRoom.spectating then
             is_local = false
           end
           P1 = Stack(1, GAME.match, is_local, msg.player_settings.panels_dir, msg.player_settings.level, msg.player_settings.character, msg.player_settings.player_number)
@@ -897,7 +898,7 @@ function select_screen.main()
           P2 = Stack(2, GAME.match, false, msg.opponent_settings.panels_dir, msg.opponent_settings.level, msg.opponent_settings.character, msg.opponent_settings.player_number)
           GAME.match.P2 = P2
           P2.cur_wait_time = default_input_repeat_delay -- this enforces default cur_wait_time for online games.  It is yet to be decided if we want to allow this to be custom online.
-          if currently_spectating then
+          if GAME.battleRoom.spectating then
             P1.panel_buffer = fake_P1.panel_buffer
             P1.gpanel_buffer = fake_P1.gpanel_buffer
           end
@@ -916,8 +917,8 @@ function select_screen.main()
             in_buf = "",
             P1_level = P1.level,
             P2_level = P2.level,
-            P1_name = my_name,
-            P2_name = op_name,
+            P1_name = GAME.battleRoom.playerNames[1],
+            P2_name = GAME.battleRoom.playerNames[2],
             P1_char = P1.character,
             P2_char = P2.character,
             P1_cur_wait_time = P1.cur_wait_time,
@@ -925,7 +926,7 @@ function select_screen.main()
             ranked = msg.ranked,
             do_countdown = true
           }
-          if currently_spectating and replay_of_match_so_far then --we joined a match in progress
+          if GAME.battleRoom.spectating and replay_of_match_so_far then --we joined a match in progress
             replay.vs = replay_of_match_so_far.vs
             P1.input_buffer = replay_of_match_so_far.vs.in_buf
             P1.panel_buffer = replay_of_match_so_far.vs.P
@@ -943,7 +944,7 @@ function select_screen.main()
             P1.play_to_end = true --this makes non local stacks run until caught up
             P2.play_to_end = true
           end
-          if not currently_spectating then
+          if not GAME.battleRoom.spectating then
             ask_for_gpanels("000000")
             ask_for_panels("000000")
           end
@@ -966,11 +967,11 @@ function select_screen.main()
           local game_start_timeout = 0
           while P1.panel_buffer == "" or P2.panel_buffer == "" or P1.gpanel_buffer == "" or P2.gpanel_buffer == "" do
             game_start_timeout = game_start_timeout + 1
-            print("game_start_timeout = " .. game_start_timeout)
-            print("P1.panel_buffer = " .. P1.panel_buffer)
-            print("P2.panel_buffer = " .. P2.panel_buffer)
-            print("P1.gpanel_buffer = " .. P1.gpanel_buffer)
-            print("P2.gpanel_buffer = " .. P2.gpanel_buffer)
+            logger.trace("game_start_timeout = " .. game_start_timeout)
+            logger.trace("P1.panel_buffer = " .. P1.panel_buffer)
+            logger.trace("P2.panel_buffer = " .. P2.panel_buffer)
+            logger.trace("P1.gpanel_buffer = " .. P1.gpanel_buffer)
+            logger.trace("P2.gpanel_buffer = " .. P2.gpanel_buffer)
             gprint(to_print, unpack(main_menu_screen_pos))
             if not do_messages() then
               return main_dumb_transition, {main_select_mode, loc("ss_disconnect") .. "\n\n" .. loc("ss_return"), 60, 300}
@@ -1055,7 +1056,7 @@ function select_screen.main()
     assert(GAME.battleRoom, "need battle room")
     assert(my_player_number and (my_player_number == 1 or my_player_number == 2), "need number")
     draw_button(0, 2, 2, 1, get_player_state_str(my_player_number, my_rating_difference, GAME.battleRoom.playerWinCounts[my_player_number], GAME.battleRoom.playerWinCounts[op_player_number], my_expected_win_ratio), "left", "top", true)
-    if cursor_data[1].state and op_name then
+    if cursor_data[1].state and GAME.battleRoom.playerNames[2] then
       draw_button(0, 7, 1, 1, "P2")
       draw_button(0, 8, 2, 1, get_player_state_str(op_player_number, op_rating_difference, GAME.battleRoom.playerWinCounts[op_player_number], GAME.battleRoom.playerWinCounts[my_player_number], op_expected_win_ratio), "left", "top", true)
     --state = state.." "..json.encode(op_state)
@@ -1153,7 +1154,7 @@ function select_screen.main()
           state.stage = uniformly(stages[state.stage].sub_stages)
         end
       end
-      print("stage and stage_is_random: " .. state.stage .. " / " .. (state.stage_is_random or "nil"))
+      logger.trace("stage and stage_is_random: " .. state.stage .. " / " .. (state.stage_is_random or "nil"))
     end
 
     -- Function to tell the select screen to exit
@@ -1240,7 +1241,7 @@ function select_screen.main()
 
         -- Handle input
         local up, down, left, right = {-1, 0}, {1, 0}, {0, -1}, {0, 1}
-        if not currently_spectating then
+        if not GAME.battleRoom.spectating then
           local KMax = 1
           if select_screen.character_select_mode == "2p_local_vs" then
             KMax = 2
@@ -1330,7 +1331,7 @@ function select_screen.main()
             global_op_state.wants_ready = false
           end
 
-          if select_screen.character_select_mode == "2p_net_vs" and not content_equal(cursor_data[1].state, prev_state) and not currently_spectating then
+          if select_screen.character_select_mode == "2p_net_vs" and not content_equal(cursor_data[1].state, prev_state) and not GAME.battleRoom.spectating then
             json_send({menu_state = cursor_data[1].state})
           end
           prev_state = shallowcpy(cursor_data[1].state)
